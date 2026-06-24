@@ -440,6 +440,7 @@
           <div class="home-actions">
             <button class="big-btn primary" id="quickStart">🎲 เริ่มแบบสุ่ม (ทุกหมวด)</button>
             <button class="big-btn ghost" id="refreshStart">🔄 สุ่มชุดคำถามใหม่</button>
+            <button class="big-btn ghost" id="genAllBtn">🆕 สร้างคำถามใหม่ทั้งหมด</button>
           </div>
         </div>
         <div class="sec-head"><h2>🎚️ เลือกระดับความยาก</h2><span class="hint">1 = พื้นฐาน · 10 = ผู้เชี่ยวชาญ</span></div>
@@ -572,7 +573,7 @@ const categories = [
   {id:"pfc", icon:"👨‍🏭", name:"ออกแบบ Power Factor Correction และความคุ้มค่าทางการเงิน", desc:"แก้ตัวประกอบกำลัง คำนวณขนาด Capacitor Bank และประเมินค่าปรับ/เงินที่ประหยัดต่อเดือน"}
 ];
 
-const questions = [
+const seedQuestions = [
 {cat:"ohm",level:1,q:"ระหว่างเทรนน้องช่างใหม่ที่หน้างาน คุณเปิดด้วยพื้นฐานที่สุดของวิศวกรไฟฟ้า — กฎของโอห์ม (Ohm's Law) ที่ใช้ทุกวัน อธิบายความสัมพันธ์ระหว่างปริมาณใด",
  options:["แรงดัน กระแส และความถี่","แรงดัน กระแส และความต้านทาน","กำลังไฟฟ้า ความถี่ และเวลา","ความต้านทาน ความเหนี่ยวนำ และความถี่"],correct:1,
  formula:"V = I × R",steps:"กฎของโอห์มเชื่อมโยงแรงดัน (V), กระแส (I) และความต้านทาน (R) เข้าด้วยกันในวงจรเดียว",tip:"ตั้งชื่อตาม Georg Simon Ohm นักฟิสิกส์ชาวเยอรมัน เป็นกฎพื้นฐานที่สุดของวงจรไฟฟ้า"},
@@ -1135,6 +1136,379 @@ const levelMeta = [
   {n:7,label:"ขั้นสูง",band:"advanced"},   {n:8,label:"ขั้นสูง+",band:"advanced"},
   {n:9,label:"ผู้เชี่ยวชาญ",band:"expert"},{n:10,label:"ผู้เชี่ยวชาญสุด",band:"expert"}
 ];
+/* ============ procedural question generator (fills every category to 100) ============ */
+const GEN_TARGET = 100;
+function gInt(lo,hi){ return Math.floor(Math.random()*(hi-lo+1))+lo; }
+function gPick(a){ return a[Math.floor(Math.random()*a.length)]; }
+function gLvl(b,s){ return Math.max(1, Math.min(10, b + gInt(-s, s))); }
+function gfmt(x, dec){
+  if(dec==null) dec=2;
+  let r = Math.round(x*Math.pow(10,dec))/Math.pow(10,dec);
+  if(Object.is(r,-0)) r=0;
+  const neg = r<0; r=Math.abs(r);
+  let s;
+  if(dec>0){ s=r.toFixed(dec); if(s.indexOf(".")>=0) s=s.replace(/0+$/,"").replace(/\.$/,""); }
+  else { s=String(Math.round(r)); }
+  const p=s.split("."); p[0]=p[0].replace(/\B(?=(\d{3})+(?!\d))/g,","); s=p.join(".");
+  return (neg?"-":"")+s;
+}
+function gopts(correct, distract, unit, dec, fmtFn){
+  const f = fmtFn ? fmtFn : (v=> gfmt(v,dec) + (unit?(" "+unit):""));
+  const ct=f(correct); const out=[ct]; const seen=new Set([ct]);
+  for(const d of (distract||[])){ const t=f(d); if(t!=null && !seen.has(t)){ seen.add(t); out.push(t);} if(out.length>=4) break; }
+  let k=1;
+  while(out.length<4 && k<200){
+    const cand = (correct!==0) ? correct*(1 + 0.13*k*((k%2)?1:-1)) : (k*2);
+    const t=f(cand); if(!seen.has(t)){ seen.add(t); out.push(t);} k++;
+  }
+  const arr=out.slice(0,4); shuffle(arr);
+  return { options: arr, correct: arr.indexOf(ct) };
+}
+function gfixed(correctText, wrongs){
+  const out=[correctText]; const seen=new Set([correctText]);
+  for(const w of (wrongs||[])){ if(w!=null && !seen.has(w)){ seen.add(w); out.push(w);} if(out.length>=4) break; }
+  let n=1; while(out.length<4){ const w="ไม่มีข้อใดถูก ("+(n++)+")"; if(!seen.has(w)){ seen.add(w); out.push(w);} if(n>9) break; }
+  shuffle(out);
+  return { options: out.slice(0,4), correct: out.indexOf(correctText) };
+}
+function ohmFmt(v){
+  if(v>=1e6) return gfmt(v/1e6,2)+" MΩ";
+  if(v>=1e3) return gfmt(v/1e3,2)+" kΩ";
+  return gfmt(v,0)+" Ω";
+}
+const RC=[["ดำ",0],["น้ำตาล",1],["แดง",2],["ส้ม",3],["เหลือง",4],["เขียว",5],["น้ำเงิน",6],["ม่วง",7],["เทา",8],["ขาว",9]];
+const SQRT2=Math.SQRT2, PI=Math.PI;
+const SITE=["โรงงาน","อาคารสำนักงาน","ตู้ควบคุม","ชุดทดสอบ","ห้องแล็บ","หน้างาน","แผงสาธิต","เวิร์กช็อป"];
+
+const GEN = {
+  /* ---------- กฎของโอห์ม / วงจร DC ---------- */
+  ohm:[
+    ()=>{ const I=gInt(2,12),R=gInt(2,25),V=I*R;
+      return Object.assign({level:gLvl(3,2),
+        q:"ที่"+gPick(SITE)+" จ่ายไฟ "+V+" โวลต์ ผ่านตัวต้านทาน "+R+" โอห์ม กระแสที่ไหลในวงจรเท่าใด",
+        formula:"I = V ÷ R", steps:"I = "+V+" ÷ "+R+" = "+I+" แอมแปร์",
+        tip:"กระแสแปรผันตรงกับแรงดัน และแปรผกผันกับความต้านทาน"},
+        gopts(I,[V*R, V+R, I+gInt(1,3)],"A",0)); },
+    ()=>{ const I=gInt(2,12),R=gInt(2,30),V=I*R;
+      return Object.assign({level:gLvl(3,2),
+        q:"กระแส "+I+" แอมแปร์ ไหลผ่านตัวต้านทาน "+R+" โอห์ม แรงดันตกคร่อมตัวต้านทานเท่าใด",
+        formula:"V = I × R", steps:"V = "+I+" × "+R+" = "+V+" โวลต์",
+        tip:"แรงดันตกคร่อม (voltage drop) คือแรงดันที่หายไปเมื่อกระแสไหลผ่านความต้านทาน"},
+        gopts(V,[I+R, Math.round(R/I*10)/10, V*2],"V",0)); },
+    ()=>{ const I=gInt(2,10),R=gInt(2,30),V=I*R;
+      return Object.assign({level:gLvl(4,2),
+        q:"วัดแรงดันคร่อมโหลดได้ "+V+" โวลต์ และกระแส "+I+" แอมแปร์ โหลดมีความต้านทานเท่าใด",
+        formula:"R = V ÷ I", steps:"R = "+V+" ÷ "+I+" = "+R+" โอห์ม",
+        tip:"ใช้สูตรนี้หาค่าความต้านทานเมื่อทราบแรงดันและกระแส"},
+        gopts(R,[V*I, V+I, R+gInt(1,4)],"Ω",0)); },
+    ()=>{ const V=gPick([5,9,12,24]),I=gPick([0.2,0.25,0.5]),R=Math.round(V/I);
+      return Object.assign({level:gLvl(5,2),
+        q:"ต้องการจำกัดกระแสให้ไหลเพียง "+I+" แอมแปร์ จากแหล่งจ่าย "+V+" โวลต์ ควรเลือกตัวต้านทานค่าเท่าใด",
+        formula:"R = V ÷ I", steps:"R = "+V+" ÷ "+I+" = "+R+" โอห์ม",
+        tip:"การเลือกตัวต้านทานจำกัดกระแสคือพื้นฐาน เช่น การต่ออนุกรมกับ LED"},
+        gopts(R,[Math.round(V*I), Math.round(I/V*1000)/1000, R+gInt(2,8)],"Ω",0)); },
+  ],
+  /* ---------- กำลังไฟฟ้าและพลังงาน ---------- */
+  power:[
+    ()=>{ const V=gInt(5,24),I=gInt(2,10),P=V*I;
+      return Object.assign({level:gLvl(3,2),
+        q:"วัดได้แรงดัน "+V+" โวลต์ และกระแส "+I+" แอมแปร์ กำลังไฟฟ้าที่โหลดใช้เท่าใด",
+        formula:"P = V × I", steps:"P = "+V+" × "+I+" = "+P+" วัตต์",
+        tip:"ยิ่งแรงดันหรือกระแสมาก กำลังไฟฟ้ายิ่งสูง"},
+        gopts(P,[V+I, Math.round(V/I*10)/10, P+gInt(2,9)],"W",0)); },
+    ()=>{ const I=gInt(2,9),R=gInt(2,20),P=I*I*R;
+      return Object.assign({level:gLvl(4,2),
+        q:"กระแส "+I+" แอมแปร์ ไหลผ่านตัวต้านทาน "+R+" โอห์ม กำลังที่สูญเสีย (กลายเป็นความร้อน) เท่าใด",
+        formula:"P = I² × R", steps:"P = "+I+"² × "+R+" = "+(I*I)+" × "+R+" = "+P+" วัตต์",
+        tip:"กำลังสูญเสียเพิ่มตามกำลังสองของกระแส กระแสมากความร้อนยิ่งสูง"},
+        gopts(P,[I*R, 2*I*R, I*I+R],"W",0)); },
+    ()=>{ const V=gPick([6,8,12,24,36]),R=gInt(2,12),P=Math.round(V*V/R*10)/10;
+      return Object.assign({level:gLvl(4,2),
+        q:"แรงดัน "+V+" โวลต์ ตกคร่อมตัวต้านทาน "+R+" โอห์ม กำลังไฟฟ้าที่ตัวต้านทานนี้เท่าใด",
+        formula:"P = V² ÷ R", steps:"P = "+V+"² ÷ "+R+" = "+(V*V)+" ÷ "+R+" = "+P+" วัตต์",
+        tip:"ใช้สูตรนี้เมื่อทราบแรงดันและความต้านทานแต่ไม่ทราบกระแส"},
+        gopts(P,[Math.round(V/R*10)/10, V*R, V*V],"W",1)); },
+    ()=>{ const P=gPick([40,60,100,150,500,1000,1500,2000]),h=gPick([1,2,3,4,5,6]),kwh=Math.round(P/1000*h*100)/100;
+      return Object.assign({level:gLvl(5,2),
+        q:"อุปกรณ์ "+P.toLocaleString("en-US")+" วัตต์ เปิดใช้งาน "+h+" ชั่วโมง ใช้พลังงานกี่กิโลวัตต์-ชั่วโมง (kWh)",
+        formula:"E = (P ÷ 1000) × t", steps:"E = ("+P+" ÷ 1000) × "+h+" = "+kwh+" kWh",
+        tip:"มิเตอร์ไฟบ้านคิดค่าไฟเป็นหน่วย kWh ต้องเปลี่ยนวัตต์เป็นกิโลวัตต์ก่อนเสมอ"},
+        gopts(kwh,[P*h, P/1000+h, kwh*2],"kWh",2)); },
+    ()=>{ const P=gPick([500,1000,1200,1500,2000,2500]),h=gPick([2,3,4,5]),r=gPick([4,4.5,5]),c=Math.round(P/1000*h*r*100)/100;
+      return Object.assign({level:gLvl(6,2),
+        q:"เครื่องใช้ไฟฟ้า "+P.toLocaleString("en-US")+" วัตต์ ใช้งาน "+h+" ชั่วโมง ค่าไฟหน่วยละ "+r+" บาท คิดเป็นเงินกี่บาท",
+        formula:"ค่าไฟ = (P ÷ 1000) × t × ราคา/หน่วย", steps:"พลังงาน = "+(P/1000)+" kW × "+h+" h = "+(Math.round(P/1000*h*100)/100)+" kWh → ค่าไฟ = "+(Math.round(P/1000*h*100)/100)+" × "+r+" = "+c+" บาท",
+        tip:"ต้องเปลี่ยนวัตต์เป็นกิโลวัตต์ก่อนเสมอ (หารด้วย 1,000) แล้วคูณชั่วโมงและราคาต่อหน่วย"},
+        gopts(c,[Math.round(P*h*r), Math.round(P/1000*h*100)/100, c*2],"บาท",2)); },
+    ()=>{ const P=gPick([40,60,100,200,500,800]),V=gPick([220,230]),I=Math.round(P/V*100)/100;
+      return Object.assign({level:gLvl(6,2),
+        q:"โหลด "+P+" วัตต์ ใช้กับไฟบ้าน "+V+" โวลต์ กระแสที่ไหลผ่านประมาณเท่าใด",
+        formula:"I = P ÷ V", steps:"I = "+P+" ÷ "+V+" ≈ "+I+" แอมแปร์",
+        tip:"อุปกรณ์กำลังสูงดึงกระแสมาก ต้องเลือกขนาดสายไฟและเบรกเกอร์ให้เหมาะ"},
+        gopts(I,[Math.round(P*V/100)/100, Math.round(V/P*100)/100, I*2],"A",2)); },
+  ],
+  /* ---------- วงจรอนุกรม–ขนาน ---------- */
+  seriespar:[
+    ()=>{ const a=gInt(2,40),b=gInt(2,40),s=a+b;
+      return Object.assign({level:gLvl(2,1),
+        q:"ตัวต้านทาน "+a+" โอห์ม และ "+b+" โอห์ม ต่ออนุกรมกัน ความต้านทานรวมเท่าใด",
+        formula:"R_รวม = R₁ + R₂ (อนุกรม)", steps:"R_รวม = "+a+" + "+b+" = "+s+" โอห์ม",
+        tip:"ต่ออนุกรมยิ่งมากตัว ความต้านทานรวมยิ่งสูงขึ้น"},
+        gopts(s,[Math.abs(a-b), Math.round(a*b/(a+b)*10)/10, a*b],"Ω",0)); },
+    ()=>{ const a=gInt(2,20),b=gInt(2,20),c=gInt(2,20),s=a+b+c;
+      return Object.assign({level:gLvl(3,1),
+        q:"ตัวต้านทาน "+a+", "+b+" และ "+c+" โอห์ม ต่ออนุกรมกัน ความต้านทานรวมเท่าใด",
+        formula:"R_รวม = R₁ + R₂ + R₃", steps:"R_รวม = "+a+" + "+b+" + "+c+" = "+s+" โอห์ม",
+        tip:"วงจรอนุกรมนำค่าทุกตัวมาบวกกันตรงๆ"},
+        gopts(s,[a+b, Math.abs(a-b)+c, a*b*c],"Ω",0)); },
+    ()=>{ const r=gPick([4,6,8,10,12,20,100]),rp=r/2;
+      return Object.assign({level:gLvl(3,1),
+        q:"ตัวต้านทาน "+r+" โอห์ม สองตัวต่อขนานกัน ความต้านทานรวมเท่าใด",
+        formula:"R_รวม = R ÷ n (ค่าเท่ากัน n ตัวขนาน)", steps:"ค่าเท่ากัน 2 ตัวขนาน → "+r+" ÷ 2 = "+rp+" โอห์ม",
+        tip:"ต่อขนาน ความต้านทานรวมจะน้อยกว่าตัวที่เล็กที่สุดเสมอ"},
+        gopts(rp,[r*2, r, r/4],"Ω",1)); },
+    ()=>{ const pairs=[[4,12],[6,3],[2,2],[10,15],[6,12],[20,5],[8,8],[3,6]]; const p=gPick(pairs); const a=p[0],b=p[1]; const rp=Math.round(a*b/(a+b)*100)/100;
+      return Object.assign({level:gLvl(4,2),
+        q:"ตัวต้านทาน "+a+" โอห์ม และ "+b+" โอห์ม ต่อขนานกัน ความต้านทานรวมเท่าใด",
+        formula:"R = (R₁ × R₂) ÷ (R₁ + R₂)", steps:"R = ("+a+" × "+b+") ÷ ("+a+" + "+b+") = "+(a*b)+" ÷ "+(a+b)+" = "+rp+" โอห์ม",
+        tip:"สูตรผลคูณหารผลบวกใช้ได้กับตัวต้านทาน 2 ตัวเท่านั้น"},
+        gopts(rp,[a+b, Math.abs(a-b), Math.round((a+b)/2*100)/100],"Ω",2)); },
+    ()=>{ const a=gPick([2,3,4,6]),b=gPick([4,6,8,12]),V=gPick([12,24,36,48]); const I=V/(a+b); const v2=Math.round(I*b*100)/100;
+      return Object.assign({level:gLvl(5,2),
+        q:"ตัวต้านทาน "+a+" Ω และ "+b+" Ω ต่ออนุกรมกับแหล่งจ่าย "+V+" โวลต์ แรงดันตกคร่อมตัว "+b+" Ω เท่าใด",
+        formula:"หา I ก่อน แล้ว V = I × R", steps:"R_รวม = "+(a+b)+" Ω, I = "+V+"÷"+(a+b)+" = "+(Math.round(I*100)/100)+" A, V = "+(Math.round(I*100)/100)+" × "+b+" = "+v2+" โวลต์",
+        tip:"นี่คือหลักการวงจรแบ่งแรงดัน (voltage divider) แรงดันแบ่งตามสัดส่วนความต้านทาน"},
+        gopts(v2,[Math.round(V*a/(a+b)*100)/100, V/2, V],"V",2)); },
+    ()=>{ const r=gPick([4,6,8,10,12]),It=gPick([2,4,6,8]); const ib=It/2;
+      return Object.assign({level:gLvl(5,2),
+        q:"กระแสรวม "+It+" A ไหลเข้าตัวต้านทาน "+r+" Ω สองตัว (เท่ากัน) ต่อขนานกัน กระแสในแต่ละสาขาเท่าใด",
+        formula:"สาขาค่าเท่ากัน → กระแสแบ่งเท่ากัน", steps:"ค่าเท่ากัน 2 สาขา → "+It+" ÷ 2 = "+ib+" แอมแปร์ต่อสาขา",
+        tip:"วงจรขนานคือวงจรแบ่งกระแส สาขาที่ความต้านทานน้อยจะได้กระแสมากกว่า"},
+        gopts(ib,[It, It/4, It*2],"A",1)); },
+  ],
+  /* ---------- ความต้านทาน / รหัสสี ---------- */
+  resistor:[
+    ()=>{ const d1=gInt(1,9),d2=gInt(0,9),m=gInt(0,5); const val=(d1*10+d2)*Math.pow(10,m);
+      const swap=(d2*10+d1)*Math.pow(10,m);
+      return Object.assign({level:gLvl(4,2),
+        q:"ตัวต้านทานแถบสี "+RC[d1][0]+"–"+RC[d2][0]+"–"+RC[m][0]+" อ่านค่าได้เท่าใด",
+        formula:"ค่า = (หลัก1 หลัก2) × 10^(ตัวคูณ)", steps:RC[d1][0]+"="+d1+", "+RC[d2][0]+"="+d2+", ตัวคูณ "+RC[m][0]+"=×10^"+m+" → "+(d1*10+d2)+" × "+Math.pow(10,m).toLocaleString("en-US")+" = "+ohmFmt(val),
+        tip:"ท่องสี: ดำ0 น้ำตาล1 แดง2 ส้ม3 เหลือง4 เขียว5 น้ำเงิน6 ม่วง7 เทา8 ขาว9"},
+        gopts(val,[swap, val*10, val*100],null,0,ohmFmt)); },
+    ()=>{ const R=gInt(2,50),k=gPick([2,3,4]); const nv=R*k;
+      return Object.assign({level:gLvl(4,2),
+        q:"ลวดเส้นหนึ่งมีความต้านทาน "+R+" โอห์ม ถ้าเพิ่มความยาวเป็น "+k+" เท่า (พื้นที่หน้าตัดเท่าเดิม) ความต้านทานใหม่เท่าใด",
+        formula:"R ∝ L (ความยาว)", steps:"ความต้านทานแปรผันตรงกับความยาว → "+R+" × "+k+" = "+nv+" โอห์ม",
+        tip:"ยิ่งสายยาว ความต้านทานยิ่งมาก จึงต้องเผื่อแรงดันตกในสายที่เดินไกล"},
+        gopts(nv,[R/k, R+k, R],"Ω",2)); },
+    ()=>{ const R=gInt(4,60),k=gPick([2,3,4]); const nv=Math.round(R/k*100)/100;
+      return Object.assign({level:gLvl(5,2),
+        q:"ลวดเส้นหนึ่งมีความต้านทาน "+R+" โอห์ม ถ้าเพิ่มพื้นที่หน้าตัดเป็น "+k+" เท่า (ความยาวเท่าเดิม) ความต้านทานใหม่เท่าใด",
+        formula:"R ∝ 1 ÷ A (พื้นที่หน้าตัด)", steps:"ความต้านทานแปรผกผันกับพื้นที่หน้าตัด → "+R+" ÷ "+k+" = "+nv+" โอห์ม",
+        tip:"สายอ้วน (หน้าตัดมาก) ความต้านทานต่ำ ทนกระแสได้มากกว่า"},
+        gopts(nv,[R*k, R+k, R],"Ω",2)); },
+    ()=>{ const base=gPick([100,150,220,330,470,680,1000,1500,2200,3300,4700]),tol=gPick([5,10]); const lo=base*(1-tol/100),hi=base*(1+tol/100);
+      const alt=(tol===5?10:5), alo=base*(1-alt/100), ahi=base*(1+alt/100);
+      return Object.assign({level:gLvl(5,2),
+        q:"ตัวต้านทาน "+base.toLocaleString("en-US")+" Ω ค่าความคลาดเคลื่อน ±"+tol+"% ค่าจริงอยู่ในช่วงใด",
+        formula:"ช่วง = ค่า ± (ค่า × %คลาดเคลื่อน)", steps:"±"+tol+"% ของ "+base+" = "+(base*tol/100)+" → ช่วง "+gfmt(lo,0)+" ถึง "+gfmt(hi,0)+" Ω",
+        tip:"แถบทองคือ ±5% แถบเงินคือ ±10% บอกความแม่นยำของตัวต้านทาน"},
+        gfixed(gfmt(lo,0)+" – "+gfmt(hi,0)+" Ω",[gfmt(alo,0)+" – "+gfmt(ahi,0)+" Ω", gfmt(base,0)+" – "+gfmt(hi,0)+" Ω", gfmt(lo,0)+" – "+gfmt(base,0)+" Ω"])); },
+  ],
+  /* ---------- ตัวเก็บประจุ ---------- */
+  capacitor:[
+    ()=>{ const C=gPick([1,2,4,5,10,22,47,100]),V=gPick([5,9,12,24,50]); const Q=C*V;
+      return Object.assign({level:gLvl(3,2),
+        q:"ตัวเก็บประจุ "+C+" µF ต่อกับแรงดัน "+V+" โวลต์ มีประจุสะสมเท่าใด (ไมโครคูลอมบ์)",
+        formula:"Q = C × V", steps:"Q = "+C+" µF × "+V+" V = "+Q+" µC",
+        tip:"ประจุที่เก็บได้แปรผันตรงกับทั้งความจุและแรงดัน"},
+        gopts(Q,[Math.round(C/V*100)/100, C+V, Q*2],"µC",2)); },
+    ()=>{ const C=gPick([2,4,5,10,20,25,50]),Q=gPick([100,200,250,500]); const V=Math.round(Q/C*100)/100;
+      return Object.assign({level:gLvl(4,2),
+        q:"ตัวเก็บประจุ "+C+" µF เก็บประจุได้ "+Q+" µC แรงดันคร่อมตัวเก็บประจุเท่าใด",
+        formula:"V = Q ÷ C", steps:"V = "+Q+" ÷ "+C+" = "+V+" โวลต์",
+        tip:"จาก Q = CV แตกได้เป็น V = Q ÷ C และ C = Q ÷ V"},
+        gopts(V,[Q*C, Math.round(C/Q*1000)/1000, V*2],"V",2)); },
+    ()=>{ const a=gPick([1,2,4,10,22,47]),b=gPick([1,3,5,10,33,68]); const s=a+b;
+      return Object.assign({level:gLvl(4,2),
+        q:"ตัวเก็บประจุ "+a+" µF และ "+b+" µF ต่อขนานกัน ความจุรวมเท่าใด",
+        formula:"C_รวม = C₁ + C₂ (ขนาน)", steps:"C_รวม = "+a+" + "+b+" = "+s+" µF",
+        tip:"ตัวเก็บประจุต่อขนานนำค่าบวกกัน (ตรงข้ามกับตัวต้านทาน)"},
+        gopts(s,[Math.round(a*b/(a+b)*100)/100, Math.abs(a-b), a*b],"µF",2)); },
+    ()=>{ const c=gPick([2,4,8,10,20,100]); const cs=c/2;
+      return Object.assign({level:gLvl(5,2),
+        q:"ตัวเก็บประจุ "+c+" µF สองตัวต่ออนุกรมกัน ความจุรวมเท่าใด",
+        formula:"C_รวม = C ÷ n (ค่าเท่ากัน n ตัวอนุกรม)", steps:"ค่าเท่ากัน 2 ตัวอนุกรม → "+c+" ÷ 2 = "+cs+" µF",
+        tip:"ตัวเก็บประจุต่ออนุกรมความจุรวมลดลง (ตรงข้ามกับตัวต้านทาน)"},
+        gopts(cs,[c*2, c, c/4],"µF",2)); },
+    ()=>{ const C=gPick([1,2,5,10,20,50,100]),V=gPick([10,12,24,50,100]); const E=Math.round(0.5*C*V*V*100)/100;
+      return Object.assign({level:gLvl(6,2),
+        q:"ตัวเก็บประจุ "+C+" µF ประจุที่แรงดัน "+V+" โวลต์ เก็บพลังงานเท่าใด (ไมโครจูล)",
+        formula:"E = ½ × C × V²", steps:"E = 0.5 × "+C+" × "+V+"² = 0.5 × "+C+" × "+(V*V)+" = "+E+" µJ",
+        tip:"พลังงานในตัวเก็บประจุแปรผันตามกำลังสองของแรงดัน"},
+        gopts(E,[C*V*V, Math.round(0.5*C*V*100)/100, Math.round(0.5*C*V*V*2*100)/100],"µJ",2)); },
+  ],
+  /* ---------- ตัวเหนี่ยวนำ ---------- */
+  inductor:[
+    ()=>{ const L=gPick([10,20,50,100,200,500]),f=gPick([50,60,100,400,1000]); const XL=Math.round(2*PI*f*L/1000*100)/100;
+      return Object.assign({level:gLvl(6,2),
+        q:"ตัวเหนี่ยวนำ "+L+" mH ที่ความถี่ "+f+" Hz มีรีแอกแตนซ์เชิงเหนี่ยวนำ (XL) เท่าใด",
+        formula:"XL = 2πfL", steps:"XL = 2 × π × "+f+" × "+(L/1000)+" H ≈ "+XL+" Ω",
+        tip:"ความถี่ยิ่งสูง ตัวเหนี่ยวนำยิ่งต้านกระแสมาก (XL เพิ่มตามความถี่)"},
+        gopts(XL,[Math.round(L/(2*PI*f)*1000*100)/100, Math.round(2*PI*f*L*100)/100, XL*2],"Ω",2)); },
+    ()=>{ const L=gPick([2,5,10,20,50,100]),I=gPick([1,2,3,5]); const E=Math.round(0.5*L*I*I*100)/100;
+      return Object.assign({level:gLvl(6,2),
+        q:"ตัวเหนี่ยวนำ "+L+" mH มีกระแส "+I+" แอมแปร์ ไหลผ่าน เก็บพลังงานในสนามแม่เหล็กเท่าใด (มิลลิจูล)",
+        formula:"E = ½ × L × I²", steps:"E = 0.5 × "+L+" × "+I+"² = 0.5 × "+L+" × "+(I*I)+" = "+E+" mJ",
+        tip:"พลังงานในตัวเหนี่ยวนำแปรผันตามกำลังสองของกระแส"},
+        gopts(E,[L*I*I, Math.round(0.5*L*I*100)/100, E*2],"mJ",2)); },
+    ()=>{ const a=gPick([10,20,50,100]),b=gPick([10,30,50,150]); const s=a+b;
+      return Object.assign({level:gLvl(4,1),
+        q:"ตัวเหนี่ยวนำ "+a+" mH และ "+b+" mH ต่ออนุกรมกัน (ไม่มีการเหนี่ยวนำร่วม) ค่ารวมเท่าใด",
+        formula:"L_รวม = L₁ + L₂ (อนุกรม)", steps:"L_รวม = "+a+" + "+b+" = "+s+" mH",
+        tip:"ตัวเหนี่ยวนำต่ออนุกรมนำค่าบวกกัน เหมือนตัวต้านทาน"},
+        gopts(s,[Math.round(a*b/(a+b)*100)/100, Math.abs(a-b), a*b],"mH",2)); },
+    ()=>{ const L=gPick([0.5,1,2,5]),dI=gPick([2,3,4,5]),dt=gPick([0.1,0.2,0.5]); const emf=Math.round(L*dI/dt*100)/100;
+      return Object.assign({level:gLvl(7,2),
+        q:"ตัวเหนี่ยวนำ "+L+" H กระแสเปลี่ยน "+dI+" แอมแปร์ ในเวลา "+dt+" วินาที แรงดันเหนี่ยวนำ (back-EMF) เท่าใด",
+        formula:"EMF = L × (ΔI ÷ Δt)", steps:"EMF = "+L+" × ("+dI+" ÷ "+dt+") = "+L+" × "+(Math.round(dI/dt*100)/100)+" = "+emf+" โวลต์",
+        tip:"ยิ่งกระแสเปลี่ยนเร็ว (Δt น้อย) แรงดันเหนี่ยวนำยิ่งสูง — ที่มาของประกายไฟตอนตัดวงจร"},
+        gopts(emf,[Math.round(L*dt/dI*100)/100, Math.round(L*dI*dt*100)/100, emf*2],"V",2)); },
+  ],
+  /* ---------- ไฟฟ้ากระแสสลับ (AC) ---------- */
+  ac:[
+    ()=>{ const f=gInt(20,600); const T=Math.round(1000/f*1000)/1000;
+      return Object.assign({level:gLvl(4,2),
+        q:"สัญญาณไฟฟ้ากระแสสลับมีความถี่ "+f+" Hz คาบเวลา (T) ของสัญญาณเท่าใด",
+        formula:"T = 1 ÷ f", steps:"T = 1 ÷ "+f+" = "+(Math.round(1/f*1e6)/1e6)+" วินาที = "+T+" ms",
+        tip:"คาบคือเวลาที่สัญญาณครบหนึ่งรอบ เป็นส่วนกลับของความถี่"},
+        gopts(T,[Math.round(f/1000*1000)/1000, Math.round(f*1000), Math.round(T*2*1000)/1000],"ms",3)); },
+    ()=>{ const T=gInt(1,50); const f=Math.round(1000/T*100)/100;
+      return Object.assign({level:gLvl(4,2),
+        q:"สัญญาณ AC มีคาบเวลา "+T+" มิลลิวินาที (ms) ความถี่เท่าใด",
+        formula:"f = 1 ÷ T", steps:"f = 1 ÷ "+(T/1000)+" s = "+f+" Hz",
+        tip:"ไฟบ้านในไทยมีความถี่ 50 Hz (คาบ 20 ms)"},
+        gopts(f,[T*1000, Math.round(T/1000*100)/100, Math.round(f*2*100)/100],"Hz",2)); },
+    ()=>{ const Vp=gInt(10,400); const Vr=Math.round(Vp/SQRT2*100)/100;
+      return Object.assign({level:gLvl(5,2),
+        q:"สัญญาณ AC รูปไซน์มีค่ายอด (peak) "+Vp+" โวลต์ ค่าประสิทธิผล (RMS) เท่าใด",
+        formula:"V_rms = V_peak ÷ √2", steps:"V_rms = "+Vp+" ÷ 1.414 ≈ "+Vr+" โวลต์",
+        tip:"ค่า RMS คือค่าที่ให้กำลังเทียบเท่าไฟ DC ≈ 0.707 ของค่ายอด"},
+        gopts(Vr,[Math.round(Vp*SQRT2*100)/100, Math.round(Vp/2*100)/100, Vp],"V",2)); },
+    ()=>{ const Vr=gInt(50,400); const Vp=Math.round(Vr*SQRT2*100)/100;
+      return Object.assign({level:gLvl(5,2),
+        q:"ไฟฟ้ากระแสสลับมีค่า RMS "+Vr+" โวลต์ ค่ายอด (peak) ประมาณเท่าใด",
+        formula:"V_peak = V_rms × √2", steps:"V_peak = "+Vr+" × 1.414 ≈ "+Vp+" โวลต์",
+        tip:"ไฟบ้าน 220V (RMS) มีค่ายอดจริงสูงถึง ~311V"},
+        gopts(Vp,[Math.round(Vr/SQRT2*100)/100, Vr*2, Vr],"V",2)); },
+    ()=>{ const f=gInt(10,500); const w=Math.round(2*PI*f*100)/100;
+      return Object.assign({level:gLvl(6,2),
+        q:"สัญญาณ AC ความถี่ "+f+" Hz มีความถี่เชิงมุม (ω) เท่าใด",
+        formula:"ω = 2πf", steps:"ω = 2 × π × "+f+" ≈ "+w+" rad/s",
+        tip:"ความถี่เชิงมุมใช้ในสูตร v(t) = V_peak sin(ωt)"},
+        gopts(w,[Math.round(f/(2*PI)*100)/100, Math.round(PI*f*100)/100, Math.round(w*2*100)/100],"rad/s",2)); },
+  ],
+  /* ---------- แม่เหล็กไฟฟ้า ---------- */
+  magnet:[
+    ()=>{ const Np=gPick([100,200,400,500,1000]),ratio=gPick([2,4,5,10]),Ns=Np*ratio,Vp=gPick([12,24,110,220]); const Vs=Vp*ratio;
+      return Object.assign({level:gLvl(5,2),
+        q:"หม้อแปลงมีขดปฐมภูมิ "+Np+" รอบ ทุติยภูมิ "+Ns+" รอบ ป้อนไฟ "+Vp+" โวลต์ ที่ขาเข้า แรงดันขาออกเท่าใด",
+        formula:"Vs = Vp × (Ns ÷ Np)", steps:"Vs = "+Vp+" × ("+Ns+" ÷ "+Np+") = "+Vp+" × "+ratio+" = "+Vs+" โวลต์",
+        tip:"Ns > Np คือหม้อแปลงเพิ่มแรงดัน (step-up)"},
+        gopts(Vs,[Math.round(Vp/ratio*100)/100, Vp+ratio, Vp*ratio*2],"V",2)); },
+    ()=>{ const Np=gPick([100,200,500,1000]),ratio=gPick([2,4,5,10]),Ns=Np/ratio,Vp=gPick([220,380,400]); const Vs=Math.round(Vp/ratio*100)/100;
+      return Object.assign({level:gLvl(5,2),
+        q:"หม้อแปลงลดแรงดันมีขดปฐมภูมิ "+Np+" รอบ ทุติยภูมิ "+Ns+" รอบ ป้อนไฟ "+Vp+" โวลต์ แรงดันขาออกเท่าใด",
+        formula:"Vs = Vp × (Ns ÷ Np)", steps:"Vs = "+Vp+" × ("+Ns+" ÷ "+Np+") = "+Vp+" ÷ "+ratio+" = "+Vs+" โวลต์",
+        tip:"Ns < Np คือหม้อแปลงลดแรงดัน (step-down)"},
+        gopts(Vs,[Vp*ratio, Vp+ratio, Math.round(Vp/ratio/2*100)/100],"V",2)); },
+    ()=>{ const B=gPick([0.2,0.5,1,1.5,2]),I=gPick([2,3,5,10]),L=gPick([0.1,0.2,0.5,1]); const F=Math.round(B*I*L*100)/100;
+      return Object.assign({level:gLvl(6,2),
+        q:"ลวดยาว "+L+" เมตร วางในสนามแม่เหล็ก "+B+" เทสลา มีกระแส "+I+" แอมแปร์ ไหลผ่าน (ตั้งฉาก) แรงที่กระทำเท่าใด",
+        formula:"F = B × I × L", steps:"F = "+B+" × "+I+" × "+L+" = "+F+" นิวตัน",
+        tip:"นี่คือหลักการทำงานของมอเตอร์ไฟฟ้า — กระแสในสนามแม่เหล็กเกิดแรง"},
+        gopts(F,[Math.round((B+I+L)*100)/100, Math.round(B*I/L*100)/100, Math.round(F*2*100)/100],"N",2)); },
+    ()=>{ const N=gPick([100,200,500,1000]),dPhi=gPick([0.01,0.02,0.05,0.1]),dt=gPick([0.1,0.2,0.5,1]); const emf=Math.round(N*dPhi/dt*100)/100;
+      return Object.assign({level:gLvl(7,2),
+        q:"ขดลวด "+N+" รอบ ฟลักซ์แม่เหล็กเปลี่ยน "+dPhi+" เวเบอร์ ในเวลา "+dt+" วินาที แรงเคลื่อนไฟฟ้าเหนี่ยวนำเท่าใด",
+        formula:"EMF = N × (ΔΦ ÷ Δt)", steps:"EMF = "+N+" × ("+dPhi+" ÷ "+dt+") = "+N+" × "+(Math.round(dPhi/dt*1000)/1000)+" = "+emf+" โวลต์",
+        tip:"กฎฟาราเดย์ — ยิ่งฟลักซ์เปลี่ยนเร็วและรอบมาก แรงเคลื่อนยิ่งสูง"},
+        gopts(emf,[Math.round(N*dPhi*dt*100)/100, Math.round(N/dPhi*dt*100)/100, emf*2],"V",2)); },
+  ],
+  /* ---------- กฎของเคอร์ชอฟฟ์ ---------- */
+  kirchhoff:[
+    ()=>{ const a=gInt(2,12),b=gInt(2,12),c=gInt(1,Math.max(2,a+b-1)); const x=a+b-c;
+      return Object.assign({level:gLvl(4,2),
+        q:"ที่จุดต่อหนึ่ง มีกระแสไหลเข้า "+a+" A และ "+b+" A และไหลออก "+c+" A ทางหนึ่ง กระแสที่ไหลออกอีกทางหนึ่งเท่าใด",
+        formula:"ΣI_เข้า = ΣI_ออก (KCL)", steps:"กระแสเข้า = "+a+" + "+b+" = "+(a+b)+" A ต้องเท่ากับกระแสออก → "+(a+b)+" − "+c+" = "+x+" A",
+        tip:"KCL: ผลรวมกระแสที่ไหลเข้าโหนดเท่ากับผลรวมที่ไหลออก (อนุรักษ์ประจุ)"},
+        gopts(x,[a+b+c, Math.abs(a-b), c],"A",0)); },
+    ()=>{ const v1=gInt(2,8),v2=gInt(2,8),v3=gInt(1,8),src=v1+v2+v3;
+      return Object.assign({level:gLvl(4,2),
+        q:"ในวงจรอนุกรมแหล่งจ่าย "+src+" โวลต์ มีแรงดันตกคร่อม "+v1+" V และ "+v2+" V ที่ตัวต้านทานสองตัว แรงดันตกคร่อมตัวที่สามเท่าใด",
+        formula:"ΣV_แหล่งจ่าย = ΣV_ตก (KVL)", steps:"V_ตกรวม = แรงดันแหล่งจ่าย → "+src+" − "+v1+" − "+v2+" = "+v3+" โวลต์",
+        tip:"KVL: ผลรวมแรงดันรอบวงปิดเป็นศูนย์ (อนุรักษ์พลังงาน)"},
+        gopts(v3,[src+v1, Math.abs(v1-v2), src],"V",0)); },
+    ()=>{ const ins=[gInt(2,10),gInt(2,10)],outs=[gInt(1,8)]; const sin=ins[0]+ins[1]; const x=sin-outs[0];
+      if(x<=0) return null;
+      return Object.assign({level:gLvl(5,2),
+        q:"กระแสไหลเข้าโหนด "+ins[0]+" A และ "+ins[1]+" A รวม มีกระแสไหลออกแล้ว "+outs[0]+" A เหลือกระแสไหลออกอีกกี่แอมแปร์",
+        formula:"ΣI_เข้า = ΣI_ออก (KCL)", steps:"("+ins[0]+" + "+ins[1]+") − "+outs[0]+" = "+sin+" − "+outs[0]+" = "+x+" A",
+        tip:"กระแสที่เข้าต้องไหลออกครบ ไม่มีประจุสะสมที่จุดต่อ"},
+        gopts(x,[sin+outs[0], outs[0], sin],"A",0)); },
+  ],
+  /* ---------- ความปลอดภัยทางไฟฟ้า ---------- */
+  safety:[
+    ()=>{ const P=gInt(5,90)*100,V=gPick([220,230]); const I=Math.round(P/V*10)/10;
+      const std=[6,10,16,20,25,32,40,50,63,80,100]; let pi=std.findIndex(s=>s>=I); if(pi<0) pi=std.length-1; const pick=std[pi];
+      return Object.assign({level:gLvl(5,2),
+        q:"เครื่องใช้ไฟฟ้า "+P.toLocaleString("en-US")+" วัตต์ ที่ "+V+" โวลต์ ควรเลือกเบรกเกอร์ขนาดมาตรฐานต่ำสุดที่เท่าใดจึงรับกระแสได้พอ",
+        formula:"I = P ÷ V แล้วเลือกขนาดมาตรฐานถัดขึ้นไป", steps:"I = "+P+" ÷ "+V+" ≈ "+I+" A → ขนาดมาตรฐานที่รับได้คือ "+pick+" A",
+        tip:"เลือกเบรกเกอร์ที่พิกัด ≥ กระแสใช้งาน เพื่อไม่ให้ตัดบ่อยแต่ยังป้องกันได้"},
+        gopts(pick,[std[Math.max(0,pi-1)], std[Math.min(std.length-1,pi+1)], Math.round(I)],"A",0)); },
+    /* conceptual pool */
+    ()=>{ const pool=[
+      {q:"สายดิน (Ground) ในระบบไฟฟ้ามีหน้าที่หลักอะไร",c:"นำกระแสรั่วลงดินเพื่อป้องกันไฟดูด",w:["เพิ่มแรงดันให้อุปกรณ์","ลดค่าไฟฟ้า","ทำให้ไฟสว่างขึ้น"],t:"สายดินสร้างทางให้กระแสรั่วไหลลงดินอย่างปลอดภัย ลดความเสี่ยงไฟดูด"},
+      {q:"อุปกรณ์ใดตัดวงจรทันทีเมื่อตรวจพบกระแสรั่วลงดิน (กันไฟดูด)",c:"RCD / ELCB (เครื่องตัดไฟรั่ว)",w:["ฟิวส์ธรรมดา","หม้อแปลง","ตัวเก็บประจุ"],t:"RCD/ELCB เปรียบเทียบกระแสเข้า-ออก ถ้าต่างกันแสดงว่ามีไฟรั่วจึงตัดวงจร"},
+      {q:"ฟิวส์ (Fuse) ทำหน้าที่อะไรในวงจรไฟฟ้า",c:"ขาดเมื่อกระแสเกินพิกัดเพื่อตัดวงจร",w:["เพิ่มกระแสในวงจร","เก็บประจุไฟฟ้า","แปลงไฟ AC เป็น DC"],t:"ฟิวส์เป็นจุดอ่อนที่ตั้งใจให้ขาดก่อนเมื่อกระแสเกิน ป้องกันสายและอุปกรณ์เสียหาย"},
+      {q:"เมื่อพบคนถูกไฟดูดติดอยู่กับอุปกรณ์ สิ่งแรกที่ควรทำคืออะไร",c:"ตัดแหล่งจ่ายไฟก่อนเข้าช่วยเหลือ",w:["ใช้มือเปล่าดึงผู้ประสบเหตุทันที","ราดน้ำที่ตัวผู้ประสบเหตุ","โทรหาช่างไฟแล้วรอ"],t:"ห้ามแตะตัวผู้ถูกไฟดูดด้วยมือเปล่าขณะยังมีไฟ ต้องตัดไฟหรือใช้ฉนวนเขี่ยออกก่อน"},
+      {q:"สีของสายดินตามมาตรฐานสายไฟทั่วไปคือสีใด",c:"เขียวแถบเหลือง",w:["แดงล้วน","ดำล้วน","น้ำเงินล้วน"],t:"สายดินใช้สีเขียว-เหลือง สายมีไฟ (Line) มักเป็นน้ำตาล/ดำ สายนิวทรัลสีฟ้า"},
+      {q:"การทำ Lockout-Tagout (LOTO) ก่อนซ่อมบำรุงมีจุดประสงค์อะไร",c:"ป้องกันการจ่ายไฟกลับโดยไม่ตั้งใจระหว่างซ่อม",w:["เพิ่มความเร็วการทำงาน","ลดค่าไฟระหว่างซ่อม","ทำให้เครื่องแรงขึ้น"],t:"ล็อกสวิตช์และติดป้ายเตือน เพื่อให้แน่ใจว่าไม่มีใครจ่ายไฟกลับขณะกำลังทำงาน"},
+      {q:"ทำไมจึงห้ามใช้อุปกรณ์ไฟฟ้าขณะมือเปียกหรือยืนบนพื้นเปียก",c:"น้ำลดความต้านทานของร่างกาย ทำให้กระแสไหลผ่านง่ายขึ้น",w:["น้ำทำให้ไฟฟ้าแรงขึ้น","น้ำทำให้ฟิวส์ขาด","น้ำเพิ่มความต้านทานจนปลอดภัย"],t:"ผิวเปียกมีความต้านทานต่ำ กระแสจึงไหลผ่านร่างกายได้มากขึ้นเมื่อสัมผัสไฟ"},
+      {q:"เบรกเกอร์ (Circuit Breaker) ต่างจากฟิวส์อย่างไร",c:"รีเซ็ตกลับมาใช้ใหม่ได้โดยไม่ต้องเปลี่ยน",w:["ต้องเปลี่ยนใหม่ทุกครั้งที่ตัด","ใช้กับไฟ DC เท่านั้น","ไม่สามารถตัดกระแสเกินได้"],t:"เบรกเกอร์ปลดวงจรเมื่อกระแสเกินแล้วสับกลับใช้ใหม่ได้ ต่างจากฟิวส์ที่ขาดแล้วต้องเปลี่ยน"},
+      {q:"อุปกรณ์ไฟฟ้าที่มีสัญลักษณ์สี่เหลี่ยมซ้อนสองชั้น (Class II) หมายถึงอะไร",c:"มีฉนวนสองชั้น ไม่ต้องต่อสายดิน",w:["ต้องต่อสายดินเสมอ","ใช้ได้เฉพาะไฟ DC","กันน้ำได้ 100%"],t:"อุปกรณ์ Double Insulation มีฉนวนสองชั้นป้องกันไฟรั่ว จึงไม่จำเป็นต้องมีสายดิน"},
+      {q:"ค่า IP เช่น IP65 บนอุปกรณ์ไฟฟ้าบอกถึงอะไร",c:"ระดับการป้องกันฝุ่นและน้ำ",w:["ระดับแรงดันสูงสุด","จำนวนสายไฟ","ขนาดฟิวส์ภายใน"],t:"ตัวเลขแรกคือกันฝุ่น ตัวเลขหลังคือกันน้ำ ยิ่งสูงยิ่งป้องกันได้ดี"},
+      {q:"เหตุใดจึงไม่ควรเสียบปลั๊กหลายตัวซ้อนกัน (พ่วงหลายชั้น) ในเต้ารับเดียว",c:"กระแสรวมอาจเกินพิกัด ทำให้สายร้อนและเกิดไฟไหม้",w:["ทำให้ไฟกระพริบเท่านั้น","เพิ่มค่าไฟเป็นสองเท่า","ทำให้อุปกรณ์ทำงานช้าลง"],t:"โหลดรวมที่มากเกินพิกัดเต้ารับ/สายพ่วง ทำให้เกิดความร้อนสะสมและไฟไหม้ได้"},
+      {q:"แรงดันไฟฟ้าระดับใดเริ่มถือว่าอันตรายถึงชีวิตเมื่อสัมผัสโดยตรง",c:"ตั้งแต่ประมาณ 50 โวลต์ AC ขึ้นไป",w:["ตั้งแต่ 5 โวลต์","ตั้งแต่ 1,000 โวลต์เท่านั้น","ทุกแรงดันปลอดภัยถ้าใส่รองเท้า"],t:"โดยทั่วไปถือว่าแรงดันเกิน ~50V AC เริ่มเสี่ยงอันตราย ขึ้นกับกระแสที่ไหลผ่านร่างกาย"},
+      ];
+      const x=gPick(pool);
+      return Object.assign({level:gLvl(2,1), q:x.q, formula:"", steps:x.steps||x.c, tip:x.t}, gfixed(x.c, x.w)); },
+  ],
+};
+
+function buildGenerated(){
+  const out=[];
+  categories.forEach(c=>{
+    const tpls = GEN[c.id] || [];
+    const have = seedQuestions.filter(q=>q.cat===c.id).length;
+    const need = Math.max(0, GEN_TARGET - have);
+    if(!tpls.length || need===0) return;
+    const seen=new Set(seedQuestions.filter(q=>q.cat===c.id).map(q=>q.q));
+    let made=0, tries=0, cap=need*300+3000;
+    while(made<need && tries<cap){
+      tries++;
+      const t=gPick(tpls);
+      let q; try{ q=t(); }catch(e){ q=null; }
+      if(!q || !q.q || seen.has(q.q)) continue;
+      seen.add(q.q); q.cat=c.id; out.push(q); made++;
+    }
+  });
+  return out;
+}
+
+let questions = seedQuestions.concat(buildGenerated());
+function regenerateQuestions(){ questions = seedQuestions.concat(buildGenerated()); return questions.length; }
+
 const catMap = {}; categories.forEach(c=>catMap[c.id]=c);
 
 const state = {
@@ -1611,6 +1985,7 @@ function init(){
   $("startSide").onclick=startQuiz;
   $("quickStart").onclick=()=>{ state.category="all"; state.level="mixed"; syncControls(); startQuiz(); };
   $("refreshStart").onclick=()=>{ startQuiz(); toast("สุ่มชุดคำถามใหม่แล้ว 🔄"); };
+  $("genAllBtn").onclick=()=>{ const n=regenerateQuestions(); renderCatGrid(); renderHomeStats(); $("footTotal").textContent=questions.length; toast("สร้างคำถามใหม่ทั้งหมดแล้ว — หมวดละ 100 ข้อ รวม "+n.toLocaleString("en-US")+" ข้อ ✨"); };
 
   $("swTimer").onclick=()=>{ state.timer=!state.timer; syncControls(); };
   $("swSound").onclick=()=>{ state.sound=!state.sound; syncControls(); if(state.sound) beep("click"); };
